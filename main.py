@@ -37,13 +37,24 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 # ── Конфиг ───────────────────────────────────────────────────────────────────
-API_ID      = int(os.getenv("TG_API_ID", "0"))
-API_HASH    = os.getenv("TG_API_HASH", "")
+# API_ID и API_HASH могут приходить из env ИЛИ из запроса (из СРМки)
+_API_ID_ENV   = int(os.getenv("TG_API_ID", "0"))
+_API_HASH_ENV = os.getenv("TG_API_HASH", "")
 API_SECRET  = os.getenv("API_SECRET", "changeme")
 MAIN_APP    = os.getenv("MAIN_APP_URL", "").rstrip("/")
-MAIN_SECRET = os.getenv("WA_WEBHOOK_SECRET", "changeme")  # тот же формат что WA
+MAIN_SECRET = os.getenv("WA_WEBHOOK_SECRET", "changeme")
 PORT        = int(os.getenv("PORT", "8000"))
 SESSION_DIR = os.getenv("SESSION_DIR", "/app/.tg_session")
+
+# Динамические — могут быть установлены из СРМки через /auth/send_code
+_dynamic_api_id:   int = 0
+_dynamic_api_hash: str = ""
+
+def get_api_id() -> int:
+    return _dynamic_api_id or _API_ID_ENV
+
+def get_api_hash() -> str:
+    return _dynamic_api_hash or _API_HASH_ENV
 
 # ── Состояние ────────────────────────────────────────────────────────────────
 _client: TelegramClient | None = None
@@ -65,7 +76,7 @@ def _has_session() -> bool:
 def _get_client(session=None) -> TelegramClient:
     return TelegramClient(
         session or _session_file(),
-        API_ID, API_HASH,
+        get_api_id(), get_api_hash(),
         system_version="4.16.30-vxCUSTOM"
     )
 
@@ -152,7 +163,7 @@ def _register_handlers(client: TelegramClient):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _client, _status, _me
-    if _has_session() and API_ID and API_HASH:
+    if _has_session() and get_api_id() and get_api_hash():
         try:
             _client = _get_client()
             await _client.connect()
@@ -195,11 +206,12 @@ async def status(request: Request):
     if not auth_check(request):
         return JSONResponse({"error": "unauthorized"}, 401)
     return {
-        "status":   _status,
-        "phone":    _me.phone if _me else None,
-        "username": _me.username if _me else None,
-        "name":     f"{_me.first_name or ''} {_me.last_name or ''}".strip() if _me else None,
-        "user_id":  str(_me.id) if _me else None,
+        "status":          _status,
+        "phone":           _me.phone if _me else None,
+        "username":        _me.username if _me else None,
+        "name":            f"{_me.first_name or ''} {_me.last_name or ''}".strip() if _me else None,
+        "user_id":         str(_me.id) if _me else None,
+        "has_credentials": bool(get_api_id() and get_api_hash()),
     }
 
 
@@ -211,10 +223,21 @@ async def auth_send_code(request: Request):
 
     body = await request.json()
     phone = body.get("phone", "").strip()
+
+    # Принимаем api_id/api_hash из запроса (из СРМки) или берём из env
+    global _dynamic_api_id, _dynamic_api_hash
+    if body.get("api_id"):
+        try:
+            _dynamic_api_id = int(body["api_id"])
+        except Exception:
+            pass
+    if body.get("api_hash"):
+        _dynamic_api_hash = str(body["api_hash"]).strip()
+
     if not phone:
         return JSONResponse({"error": "phone required"}, 400)
-    if not API_ID or not API_HASH:
-        return JSONResponse({"error": "TG_API_ID and TG_API_HASH not configured"}, 500)
+    if not get_api_id() or not get_api_hash():
+        return JSONResponse({"error": "Укажите TG_API_ID и TG_API_HASH"}, 400)
 
     try:
         if _client:
