@@ -162,22 +162,10 @@ def _register_handlers(client: TelegramClient):
     async def on_read_outbox(event):
         """Собеседник прочитал наши исходящие сообщения."""
         try:
-            # Логируем все атрибуты для диагностики
-            log.info(f"[TG] READ event: inbox={getattr(event,'inbox',None)} "
-                     f"attrs={[a for a in dir(event) if not a.startswith('_') and not callable(getattr(event,a,None))][:15]}")
-            # Только исходящие (наши сообщения прочитаны собеседником)
             if getattr(event, 'inbox', True):
-                return
-            peer = getattr(event, 'peer_id', None) or getattr(event, 'peer', None)
-            if peer is None:
-                log.warning(f"[TG] READ: no peer found")
-                return
-            peer_id = str(
-                getattr(peer, 'user_id', None) or
-                getattr(peer, 'channel_id', None) or
-                peer
-            )
-            if not peer_id or peer_id == 'None':
+                return  # inbox=True значит мы читаем входящие, нас интересует False
+            peer_id = str(getattr(event, 'chat_id', None) or "")
+            if not peer_id or peer_id == 'None' or peer_id == '0':
                 return
             log.info(f"[TG] READ outbox peer={peer_id} max_id={event.max_id}")
             await notify_main("read", {
