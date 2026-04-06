@@ -164,14 +164,22 @@ def _register_handlers(client: TelegramClient):
         try:
             if event.is_group or event.is_channel:
                 return
-            peer_id = str(event.peer_id.user_id) if hasattr(event.peer_id, "user_id") else None
-            if not peer_id:
+            # peer_id может быть в разных атрибутах
+            peer = getattr(event, 'peer_id', None) or getattr(event, 'peer', None)
+            if peer is None:
+                return
+            peer_id = str(
+                getattr(peer, 'user_id', None) or
+                getattr(peer, 'channel_id', None) or
+                peer
+            )
+            if not peer_id or peer_id == 'None':
                 return
             log.info(f"[TG] READ outbox peer={peer_id} max_id={event.max_id}")
             await notify_main("read", {
                 "tg_user_id": peer_id,
                 "max_id":     event.max_id,
-                "inbox":      False,   # False = наши сообщения прочитаны собеседником
+                "inbox":      False,
             })
         except Exception as e:
             log.warning(f"[TG] on_read_outbox error: {e}")
