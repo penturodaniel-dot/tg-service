@@ -158,15 +158,19 @@ def _register_handlers(client: TelegramClient):
             "media_type":  media_type,
         })
 
-    @client.on(events.MessageRead(inbox=False))
+    @client.on(events.MessageRead)
     async def on_read_outbox(event):
         """Собеседник прочитал наши исходящие сообщения."""
         try:
-            if event.is_group or event.is_channel:
+            # Логируем все атрибуты для диагностики
+            log.info(f"[TG] READ event: inbox={getattr(event,'inbox',None)} "
+                     f"attrs={[a for a in dir(event) if not a.startswith('_') and not callable(getattr(event,a,None))][:15]}")
+            # Только исходящие (наши сообщения прочитаны собеседником)
+            if getattr(event, 'inbox', True):
                 return
-            # peer_id может быть в разных атрибутах
             peer = getattr(event, 'peer_id', None) or getattr(event, 'peer', None)
             if peer is None:
+                log.warning(f"[TG] READ: no peer found")
                 return
             peer_id = str(
                 getattr(peer, 'user_id', None) or
