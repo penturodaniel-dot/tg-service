@@ -158,6 +158,24 @@ def _register_handlers(client: TelegramClient):
             "media_type":  media_type,
         })
 
+    @client.on(events.MessageRead(inbox=False))
+    async def on_read_outbox(event):
+        """Собеседник прочитал наши исходящие сообщения."""
+        try:
+            if event.is_group or event.is_channel:
+                return
+            peer_id = str(event.peer_id.user_id) if hasattr(event.peer_id, "user_id") else None
+            if not peer_id:
+                return
+            log.info(f"[TG] READ outbox peer={peer_id} max_id={event.max_id}")
+            await notify_main("read", {
+                "tg_user_id": peer_id,
+                "max_id":     event.max_id,
+                "inbox":      False,   # False = наши сообщения прочитаны собеседником
+            })
+        except Exception as e:
+            log.warning(f"[TG] on_read_outbox error: {e}")
+
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 @asynccontextmanager
