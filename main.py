@@ -432,6 +432,62 @@ async def health():
     return {"ok": True, "status": _status}
 
 
+@app.post("/mark_read")
+async def mark_read(request: Request):
+    """Отметить сообщения как прочитанные — пользователь увидит галочки."""
+    if not auth_check(request):
+        return JSONResponse({"error": "unauthorized"}, 401)
+    if not _client or _status != "connected":
+        return JSONResponse({"error": "Not connected"}, 503)
+    body = await request.json()
+    user_id = body.get("user_id")
+    if not user_id:
+        return JSONResponse({"error": "user_id required"}, 400)
+    try:
+        peer = int(user_id) if str(user_id).lstrip("-").isdigit() else user_id
+        await _client.send_read_acknowledge(peer)
+        log.info(f"[TG] mark_read user={user_id}")
+        return {"ok": True}
+    except Exception as e:
+        log.error(f"[TG] mark_read error: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, 500)
+
+
+@app.get("/user_status/{user_id}")
+async def user_status(request: Request, user_id: str):
+    """Получить статус пользователя — онлайн/оффлайн/последний визит."""
+    if not auth_check(request):
+        return JSONResponse({"error": "unauthorized"}, 401)
+    if not _client or _status != "connected":
+        return JSONResponse({"error": "Not connected"}, 503)
+    try:
+        peer = int(user_id) if user_id.lstrip("-").isdigit() else user_id
+        entity = await _client.get_entity(peer)
+        status = getattr(entity, "status", None)
+        if status is None:
+            return {"ok": True, "online": False, "last_seen": None, "status": "unknown"}
+        from telethon.tl.types import (
+            UserStatusOnline, UserStatusOffline,
+            UserStatusRecently, UserStatusLastWeek, UserStatusLastMonth
+        )
+        if isinstance(status, UserStatusOnline):
+            return {"ok": True, "online": True, "last_seen": None, "status": "online"}
+        elif isinstance(status, UserStatusOffline):
+            return {"ok": True, "online": False,
+                    "last_seen": status.was_online.isoformat() if status.was_online else None,
+                    "status": "offline"}
+        elif isinstance(status, UserStatusRecently):
+            return {"ok": True, "online": False, "last_seen": None, "status": "recently"}
+        elif isinstance(status, UserStatusLastWeek):
+            return {"ok": True, "online": False, "last_seen": None, "status": "last_week"}
+        elif isinstance(status, UserStatusLastMonth):
+            return {"ok": True, "online": False, "last_seen": None, "status": "last_month"}
+        return {"ok": True, "online": False, "last_seen": None, "status": "unknown"}
+    except Exception as e:
+        log.error(f"[TG] user_status error: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, 500)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=PORT)
