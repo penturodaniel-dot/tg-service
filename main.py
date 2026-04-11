@@ -99,6 +99,21 @@ async def notify_main(event: str, data: dict):
 # ── Регистрируем обработчики входящих сообщений ───────────────────────────────
 def _register_handlers(client: TelegramClient):
 
+    @client.on(events.MessageRead(inbox=False))
+    async def on_read(event):
+        """Получатель прочитал наши исходящие сообщения."""
+        try:
+            peer = await event.get_input_chat()
+            entity = await client.get_entity(peer)
+            if not isinstance(entity, User):
+                return
+            await notify_main("read", {
+                "tg_user_id": str(entity.id),
+                "max_id":     event.max_id,
+            })
+        except Exception as e:
+            log.warning(f"[TG] on_read error: {e}")
+
     @client.on(events.NewMessage(incoming=True))
     async def on_message(event):
         if event.is_group or event.is_channel:
@@ -407,6 +422,25 @@ async def get_contact(request: Request, user_id: str):
         }
     except Exception as e:
         log.error(f"[TG] get_contact error: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, 500)
+
+
+@app.post("/mark_read")
+async def mark_read(request: Request):
+    if not auth_check(request):
+        return JSONResponse({"error": "unauthorized"}, 401)
+    if not _client or _status != "connected":
+        return JSONResponse({"error": "Not connected"}, 503)
+    body = await request.json()
+    user_id = body.get("user_id")
+    if not user_id:
+        return JSONResponse({"error": "user_id required"}, 400)
+    try:
+        peer = int(user_id) if str(user_id).lstrip("-").isdigit() else user_id
+        await _client.send_read_acknowledge(peer)
+        return {"ok": True}
+    except Exception as e:
+        log.error(f"[TG] mark_read error: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, 500)
 
 
