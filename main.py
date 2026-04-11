@@ -145,7 +145,7 @@ def _register_handlers(client: TelegramClient):
                 log.warning(f"[TG] media download error: {e}")
                 text = text or "[медиафайл]"
 
-        log.info(f"[TG] MSG from {user_id} (@{username}): text={repr(text[:80])} has_media={has_media}")
+        log.info(f"[TG] MSG from {user_id} (@{username}): {text[:60]}")
 
         await notify_main("message", {
             "tg_user_id":  user_id,
@@ -156,25 +156,8 @@ def _register_handlers(client: TelegramClient):
             "has_media":   has_media,
             "media_base64": media_base64,
             "media_type":  media_type,
+            "message_id":  event.message.id,
         })
-
-    @client.on(events.MessageRead)
-    async def on_read_outbox(event):
-        """Собеседник прочитал наши исходящие сообщения."""
-        try:
-            if getattr(event, 'inbox', True):
-                return  # inbox=True значит мы читаем входящие, нас интересует False
-            peer_id = str(getattr(event, 'chat_id', None) or "")
-            if not peer_id or peer_id == 'None' or peer_id == '0':
-                return
-            log.info(f"[TG] READ outbox peer={peer_id} max_id={event.max_id}")
-            await notify_main("read", {
-                "tg_user_id": peer_id,
-                "max_id":     event.max_id,
-                "inbox":      False,
-            })
-        except Exception as e:
-            log.warning(f"[TG] on_read_outbox error: {e}")
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
@@ -356,8 +339,8 @@ async def send_message(request: Request):
         return JSONResponse({"error": "to and message required"}, 400)
 
     try:
-        await _client.send_message(int(to) if str(to).lstrip("-").isdigit() else to, text)
-        return {"ok": True}
+        sent = await _client.send_message(int(to) if str(to).lstrip("-").isdigit() else to, text)
+        return {"ok": True, "message_id": sent.id}
     except Exception as e:
         log.error(f"[TG] send error: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, 500)
@@ -427,65 +410,43 @@ async def get_contact(request: Request, user_id: str):
         return JSONResponse({"ok": False, "error": str(e)}, 500)
 
 
-@app.get("/health")
-async def health():
-    return {"ok": True, "status": _status}
+@app.delete("/message/{peer_id}/{message_id}")
+async def delete_message(request: Request, peer_id: str, message_id: int):
+    if not auth_check(request):
+        return JSONResponse({"error": "unauthorized"}, 401)
+    if not _client or _status != "connected":
+        return JSONResponse({"error": "Not connected"}, 503)
+    try:
+        peer = int(peer_id) if peer_id.lstrip("-").isdigit() else peer_id
+        await _client.delete_messages(peer, [message_id])
+        return {"ok": True}
+    except Exception as e:
+        log.error(f"[TG] delete_message error: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, 500)
 
 
-@app.post("/mark_read")
-async def mark_read(request: Request):
-    """Отметить сообщения как прочитанные — пользователь увидит галочки."""
+@app.patch("/message/{peer_id}/{message_id}")
+async def edit_message(request: Request, peer_id: str, message_id: int):
     if not auth_check(request):
         return JSONResponse({"error": "unauthorized"}, 401)
     if not _client or _status != "connected":
         return JSONResponse({"error": "Not connected"}, 503)
     body = await request.json()
-    user_id = body.get("user_id")
-    if not user_id:
-        return JSONResponse({"error": "user_id required"}, 400)
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"error": "text required"}, 400)
     try:
-        peer = int(user_id) if str(user_id).lstrip("-").isdigit() else user_id
-        await _client.send_read_acknowledge(peer)
-        log.info(f"[TG] mark_read user={user_id}")
+        peer = int(peer_id) if peer_id.lstrip("-").isdigit() else peer_id
+        await _client.edit_message(peer, message_id, text)
         return {"ok": True}
     except Exception as e:
-        log.error(f"[TG] mark_read error: {e}")
+        log.error(f"[TG] edit_message error: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, 500)
 
 
-@app.get("/user_status/{user_id}")
-async def user_status(request: Request, user_id: str):
-    """Получить статус пользователя — онлайн/оффлайн/последний визит."""
-    if not auth_check(request):
-        return JSONResponse({"error": "unauthorized"}, 401)
-    if not _client or _status != "connected":
-        return JSONResponse({"error": "Not connected"}, 503)
-    try:
-        peer = int(user_id) if user_id.lstrip("-").isdigit() else user_id
-        entity = await _client.get_entity(peer)
-        status = getattr(entity, "status", None)
-        if status is None:
-            return {"ok": True, "online": False, "last_seen": None, "status": "unknown"}
-        from telethon.tl.types import (
-            UserStatusOnline, UserStatusOffline,
-            UserStatusRecently, UserStatusLastWeek, UserStatusLastMonth
-        )
-        if isinstance(status, UserStatusOnline):
-            return {"ok": True, "online": True, "last_seen": None, "status": "online"}
-        elif isinstance(status, UserStatusOffline):
-            return {"ok": True, "online": False,
-                    "last_seen": status.was_online.isoformat() if status.was_online else None,
-                    "status": "offline"}
-        elif isinstance(status, UserStatusRecently):
-            return {"ok": True, "online": False, "last_seen": None, "status": "recently"}
-        elif isinstance(status, UserStatusLastWeek):
-            return {"ok": True, "online": False, "last_seen": None, "status": "last_week"}
-        elif isinstance(status, UserStatusLastMonth):
-            return {"ok": True, "online": False, "last_seen": None, "status": "last_month"}
-        return {"ok": True, "online": False, "last_seen": None, "status": "unknown"}
-    except Exception as e:
-        log.error(f"[TG] user_status error: {e}")
-        return JSONResponse({"ok": False, "error": str(e)}, 500)
+@app.get("/health")
+async def health():
+    return {"ok": True, "status": _status}
 
 
 if __name__ == "__main__":
