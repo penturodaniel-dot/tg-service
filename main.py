@@ -31,7 +31,11 @@ from telethon.errors import (
     PasswordHashInvalidError, PhoneNumberBannedError,
     FloodWaitError
 )
-from telethon.tl.types import InputPeerUser, User, MessageMediaPhoto, MessageMediaDocument
+from telethon.tl.types import (
+    InputPeerUser, User, MessageMediaPhoto, MessageMediaDocument,
+    UserStatusOnline, UserStatusOffline, UserStatusRecently,
+    UserStatusLastWeek, UserStatusLastMonth,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -508,6 +512,36 @@ async def edit_message(request: Request, peer_id: str, message_id: int):
         return {"ok": True}
     except Exception as e:
         log.error(f"[TG] edit_message error: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, 500)
+
+
+@app.get("/user_status/{user_id}")
+async def get_user_status(request: Request, user_id: str):
+    """Статус онлайн пользователя (online / recently / last_week / last_month / unknown)."""
+    if not auth_check(request):
+        return JSONResponse({"error": "unauthorized"}, 401)
+    if not _client or _status != "connected":
+        return JSONResponse({"error": "Not connected"}, 503)
+    try:
+        peer   = int(user_id) if user_id.lstrip("-").isdigit() else user_id
+        entity = await _client.get_entity(peer)
+        st     = getattr(entity, "status", None)
+
+        if isinstance(st, UserStatusOnline):
+            return {"ok": True, "online": True,  "status": "online",      "last_seen": None}
+        elif isinstance(st, UserStatusOffline):
+            last = st.was_online.isoformat() if st.was_online else None
+            return {"ok": True, "online": False, "status": "offline",     "last_seen": last}
+        elif isinstance(st, UserStatusRecently):
+            return {"ok": True, "online": False, "status": "recently",    "last_seen": None}
+        elif isinstance(st, UserStatusLastWeek):
+            return {"ok": True, "online": False, "status": "last_week",   "last_seen": None}
+        elif isinstance(st, UserStatusLastMonth):
+            return {"ok": True, "online": False, "status": "last_month",  "last_seen": None}
+        else:
+            return {"ok": True, "online": False, "status": "unknown",     "last_seen": None}
+    except Exception as e:
+        log.error(f"[TG] get_user_status error: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, 500)
 
 
