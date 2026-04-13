@@ -114,6 +114,39 @@ def _register_handlers(client: TelegramClient):
         except Exception as e:
             log.warning(f"[TG] on_read error: {e}")
 
+    @client.on(events.NewMessage(outgoing=True))
+    async def on_outgoing(event):
+        """Исходящие сообщения — менеджер написал напрямую из Telegram."""
+        if event.is_group or event.is_channel:
+            return
+        try:
+            peer = await event.get_input_chat()
+            entity = await client.get_entity(peer)
+            if not isinstance(entity, User):
+                return
+        except Exception as e:
+            log.warning(f"[TG] on_outgoing get_entity error: {e}")
+            return
+
+        user_id  = str(entity.id)
+        username = getattr(entity, "username", None) or ""
+        text     = event.message.text or event.message.message or "[медиафайл]"
+
+        log.info(f"[TG] OUTGOING to {user_id} (@{username}): {text[:60]}")
+
+        await notify_main("message", {
+            "tg_user_id":   user_id,
+            "username":     username,
+            "sender_name":  "",
+            "phone":        "",
+            "body":         text,
+            "has_media":    bool(event.message.media),
+            "media_base64": None,
+            "media_type":   "",
+            "message_id":   event.message.id,
+            "is_outgoing":  True,
+        })
+
     @client.on(events.NewMessage(incoming=True))
     async def on_message(event):
         if event.is_group or event.is_channel:
