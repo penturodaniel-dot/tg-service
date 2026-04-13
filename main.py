@@ -66,6 +66,7 @@ _status = "disconnected"   # disconnected | awaiting_code | awaiting_2fa | conne
 _phone  = None             # номер телефона текущей сессии
 _phone_hash = None         # hash от send_code_request
 _me: User | None = None    # инфо о себе
+_handlers_registered = False  # гвардия против двойной регистрации хендлеров
 
 
 def _session_file() -> str:
@@ -102,6 +103,11 @@ async def notify_main(event: str, data: dict):
 
 # ── Регистрируем обработчики входящих сообщений ───────────────────────────────
 def _register_handlers(client: TelegramClient):
+    global _handlers_registered
+    if _handlers_registered:
+        log.info("[TG] Handlers already registered, skipping duplicate registration")
+        return
+    _handlers_registered = True
 
     @client.on(events.MessageRead(inbox=False))
     async def on_read(event):
@@ -358,7 +364,7 @@ async def auth_sign_in(request: Request):
 
 @app.post("/auth/sign_out")
 async def auth_sign_out(request: Request):
-    global _client, _status, _me, _phone, _phone_hash
+    global _client, _status, _me, _phone, _phone_hash, _handlers_registered
     if not auth_check(request):
         return JSONResponse({"error": "unauthorized"}, 401)
     try:
@@ -369,6 +375,7 @@ async def auth_sign_out(request: Request):
         if os.path.exists(SESSION_DIR):
             shutil.rmtree(SESSION_DIR, ignore_errors=True)
         _client = _status = _me = _phone = _phone_hash = None
+        _handlers_registered = False
         _status = "disconnected"
         await notify_main("disconnected", {"reason": "sign_out"})
         return {"ok": True}
