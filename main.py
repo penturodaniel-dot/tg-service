@@ -484,6 +484,9 @@ async def mark_read(request: Request):
         await _client.send_read_acknowledge(peer)
         return {"ok": True}
     except Exception as e:
+        if "Could not find the input entity" in str(e):
+            log.warning(f"[TG] mark_read: unknown entity {user_id}, skipping")
+            return {"ok": True, "skipped": True}
         log.error(f"[TG] mark_read error: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, 500)
 
@@ -548,6 +551,9 @@ async def get_user_status(request: Request, user_id: str):
         else:
             return {"ok": True, "online": False, "status": "unknown",     "last_seen": None}
     except Exception as e:
+        if "Could not find the input entity" in str(e):
+            log.warning(f"[TG] get_user_status: unknown entity {user_id}, skipping")
+            return {"ok": False, "online": False, "status": "unknown", "last_seen": None}
         log.error(f"[TG] get_user_status error: {e}")
         return JSONResponse({"ok": False, "error": str(e)}, 500)
 
